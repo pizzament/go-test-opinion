@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,31 @@ type Market struct {
 	Volume24h   string `json:"volume24h"`
 }
 
+type MarketWithPrices struct {
+	Market
+	YesBid string `json:"yesBid"`
+	YesAsk string `json:"yesAsk"`
+	NoBid  string `json:"noBid"`
+	NoAsk  string `json:"noAsk"`
+}
+
+type Order struct {
+	Price string `json:"price"`
+	Size  string `json:"size"`
+}
+
+type OrderbookResponse struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	Result struct {
+		Market    string  `json:"market"`
+		TokenID   string  `json:"tokenId"`
+		Timestamp int64   `json:"timestamp"`
+		Bids      []Order `json:"bids"`
+		Asks      []Order `json:"asks"`
+	} `json:"result"`
+}
+
 type APIResponse struct {
 	Code   int    `json:"code"`
 	Msg    string `json:"msg"`
@@ -32,6 +58,7 @@ type APIResponse struct {
 }
 
 const opinionTradeAPI = "https://openapi.opinion.trade/openapi/market"
+const orderbookAPI = "https://openapi.opinion.trade/openapi/token/orderbook"
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
@@ -101,8 +128,11 @@ func getRandomMarkets(w http.ResponseWriter, r *http.Request) {
 	// Select 5 random markets
 	randomMarkets := selectRandomMarkets(apiResp.Result.List, 5)
 
+	// Enrich markets with bid/ask prices
+	marketsWithPrices := enrichMarketsWithPrices(randomMarkets, apiKey, client)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(randomMarkets)
+	json.NewEncoder(w).Encode(marketsWithPrices)
 }
 
 func selectRandomMarkets(markets []Market, count int) []Market {
@@ -124,6 +154,95 @@ func selectRandomMarkets(markets []Market, count int) []Market {
 	}
 
 	return shuffled[:count]
+}
+
+func enrichMarketsWithPrices(markets []Market, apiKey string, client *http.Client) []MarketWithPrices {
+	result := make([]MarketWithPrices, len(markets))
+	var wg sync.WaitGroup
+
+	for i, market := range markets {
+		result[i].Market = market
+		wg.Add(2)
+
+		// Fetch Yes token orderbook
+		go func(idx int, tokenID string) {
+			defer wg.Done()
+			bid, ask := fetchBestPrices(tokenID, apiKey, client)
+			result[idx].YesBid = bid
+			result[idx].YesAsk = ask
+		}(i, market.YesTokenID)
+
+		// Fetch No token orderbook
+		go func(idx int, tokenID string) {
+			defer wg.Done()
+			bid, ask := fetchBestPrices(tokenID, apiKey, client)
+			result[idx].NoBid = bid
+			result[idx].NoAsk = ask
+		}(i, market.NoTokenID)
+	}
+
+	wg.Wait()
+	return result
+}
+
+func fetchBestPrices(tokenID, apiKey string, client *http.Client) (bestBid, bestAsk string) {
+	if tokenID == "" {
+		return "N/A", "N/A"
+	}
+
+	url := fmt.Sprintf("%s?token_id=%s", orderbookAPI, tokenID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Printf("Failed to create orderbook request for %s: %v", tokenID, err)
+		return "N/A", "N/A"
+	}
+
+	req.Header.Set("apikey", apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Failed to fetch orderbook for %s: %v", tokenID, err)
+		return "N/A", "N/A"
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Orderbook API returned status %d for %s", resp.StatusCode, tokenID)
+		return "N/A", "N/A"
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Failed to read orderbook response for %s: %v", tokenID, err)
+		return "N/A", "N/A"
+	}
+
+	var obResp OrderbookResponse
+	if err := json.Unmarshal(body, &obResp); err != nil {
+		log.Printf("Failed to parse orderbook for %s: %v", tokenID, err)
+		return "N/A", "N/A"
+	}
+
+	if obResp.Code != 0 {
+		log.Printf("Orderbook API error for %s: %s", tokenID, obResp.Msg)
+		return "N/A", "N/A"
+	}
+
+	// Get best bid (highest bid price - first in bids array)
+	if len(obResp.Result.Bids) > 0 {
+		bestBid = obResp.Result.Bids[0].Price
+	} else {
+		bestBid = "N/A"
+	}
+
+	// Get best ask (lowest ask price - first in asks array)
+	if len(obResp.Result.Asks) > 0 {
+		bestAsk = obResp.Result.Asks[0].Price
+	} else {
+		bestAsk = "N/A"
+	}
+
+	return bestBid, bestAsk
 }
 
 func getHTML() string {
@@ -359,21 +478,37 @@ func getHTML() string {
                         '<div class="market-description">Market ID: ' + market.marketId + ' • Status: ' + market.statusEnum + '</div>' +
                         '<div class="market-stats">' +
                             '<div class="stat">' +
-                                '<div class="stat-label">Total Volume</div>' +
-                                '<div class="stat-value yes">$' + formatVolume(market.volume) + '</div>' +
+                                '<div class="stat-label">Yes Bid</div>' +
+                                '<div class="stat-value yes">' + formatPrice(market.yesBid) + '</div>' +
                             '</div>' +
                             '<div class="stat">' +
-                                '<div class="stat-label">24h Volume</div>' +
-                                '<div class="stat-value no">$' + formatVolume(market.volume24h) + '</div>' +
+                                '<div class="stat-label">Yes Ask</div>' +
+                                '<div class="stat-value yes">' + formatPrice(market.yesAsk) + '</div>' +
                             '</div>' +
                         '</div>' +
-                        '<div class="market-meta">🎯 Yes Token: ' + shortenAddress(market.yesTokenId) + '</div>' +
-                        '<div class="market-meta">🎯 No Token: ' + shortenAddress(market.noTokenId) + '</div>' +
+                        '<div class="market-stats" style="margin-top: 10px;">' +
+                            '<div class="stat">' +
+                                '<div class="stat-label">No Bid</div>' +
+                                '<div class="stat-value no">' + formatPrice(market.noBid) + '</div>' +
+                            '</div>' +
+                            '<div class="stat">' +
+                                '<div class="stat-label">No Ask</div>' +
+                                '<div class="stat-value no">' + formatPrice(market.noAsk) + '</div>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="market-meta">💰 Volume: $' + formatVolume(market.volume) + ' (24h: $' + formatVolume(market.volume24h) + ')</div>' +
                     '</div>'
                 ).join('') +
                 '</div>';
 
             container.innerHTML = html;
+        }
+
+        function formatPrice(price) {
+            if (!price || price === 'N/A') return 'N/A';
+            const num = parseFloat(price);
+            if (isNaN(num)) return price;
+            return (num * 100).toFixed(1) + '%';
         }
 
         function formatVolume(volume) {

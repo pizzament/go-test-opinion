@@ -9,9 +9,10 @@ A simple Go web application that displays 5 random prediction markets from Opini
 - Modern, responsive UI with smooth animations
 - Real-time market data including:
   - Market title and status
+  - Bid/Ask prices for Yes and No tokens (displayed as percentages)
   - Total volume and 24h volume
-  - Yes/No token addresses
   - Market ID
+- Concurrent orderbook fetching for optimal performance
 - Refresh button to load new random markets
 
 ## Prerequisites
@@ -69,11 +70,15 @@ The application uses the Fisher-Yates shuffle algorithm to randomly select 5 mar
 
 The app uses the official Opinion.trade Open API:
 
-**Endpoint:** `GET https://openapi.opinion.trade/openapi/market`
+**Markets Endpoint:** `GET https://openapi.opinion.trade/openapi/market`
 
 **Query Parameters:**
 - `status=activated` - Only fetch active markets
 - `limit=20` - Fetch up to 20 markets per request
+
+**Orderbook Endpoint:** `GET https://openapi.opinion.trade/openapi/token/orderbook?token_id={tokenId}`
+
+Returns bid/ask prices for each token (Yes and No outcomes)
 
 **Authentication:** Requires `apikey` header with your Opinion.trade API key
 
@@ -92,7 +97,11 @@ OPINION_API_KEY=your_api_key_here ./random-markets
 The UI features:
 - Gradient purple background
 - Card-based layout for each market
-- Color-coded volume statistics (green for total, red for 24h)
+- Color-coded bid/ask prices:
+  - Green for Yes token prices (bid/ask)
+  - Red for No token prices (bid/ask)
+  - Prices displayed as percentages
+- Volume statistics for total and 24h trading activity
 - Hover effects and smooth animations
 - Responsive design that works on mobile and desktop
 - Loading spinner and error handling
