@@ -4,19 +4,20 @@ A simple Go web application that displays 5 random prediction markets from Opini
 
 ## Features
 
-- Fetches markets from the Opinion.trade API
+- Fetches markets from the official Opinion.trade Open API
 - Displays 5 randomly selected markets
 - Modern, responsive UI with smooth animations
 - Real-time market data including:
-  - Market question and description
-  - Yes/No prices (displayed as percentages)
-  - End date
-  - Trading volume
+  - Market title and status
+  - Total volume and 24h volume
+  - Yes/No token addresses
+  - Market ID
 - Refresh button to load new random markets
 
 ## Prerequisites
 
 - Go 1.16 or higher
+- Opinion.trade API key (apply at https://docs.opinion.trade/)
 
 ## Installation
 
@@ -28,9 +29,23 @@ cd go-test-opinion
 
 2. No additional dependencies needed (uses only Go standard library)
 
+## Setup
+
+1. Get your API key from Opinion.trade by filling out the application form at https://docs.opinion.trade/developer-guide/opinion-open-api/authentication
+
+2. Set the API key as an environment variable:
+```bash
+export OPINION_API_KEY=your_api_key_here
+```
+
 ## Usage
 
 1. Run the application:
+```bash
+OPINION_API_KEY=your_api_key_here go run main.go
+```
+
+Or if you've already exported the environment variable:
 ```bash
 go run main.go
 ```
@@ -40,7 +55,7 @@ go run main.go
 http://localhost:8080
 ```
 
-3. Click the "Load Random Markets" button to fetch and display 5 random markets
+3. Click the "Load Random Markets" button to fetch and display 5 random activated markets
 
 ## How It Works
 
@@ -52,29 +67,35 @@ The application uses the Fisher-Yates shuffle algorithm to randomly select 5 mar
 
 ## API Integration
 
-The app fetches data from:
-```
-https://api.opinion.trade/v1/markets
-```
+The app uses the official Opinion.trade Open API:
 
-**Note:** The actual API endpoint may differ. If you encounter issues, please check the Opinion.trade API documentation at https://docs.opinion.trade/ for the correct endpoint and data structure.
+**Endpoint:** `GET https://openapi.opinion.trade/openapi/market`
+
+**Query Parameters:**
+- `status=activated` - Only fetch active markets
+- `limit=20` - Fetch up to 20 markets per request
+
+**Authentication:** Requires `apikey` header with your Opinion.trade API key
+
+For more information, see the [Opinion.trade API documentation](https://docs.opinion.trade/developer-guide/opinion-open-api/overview).
 
 ## Building
 
 To build the application:
 ```bash
 go build -o random-markets
-./random-markets
+OPINION_API_KEY=your_api_key_here ./random-markets
 ```
 
-## Screenshots
+## UI Features
 
 The UI features:
 - Gradient purple background
 - Card-based layout for each market
-- Color-coded Yes (green) and No (red) prices
+- Color-coded volume statistics (green for total, red for 24h)
 - Hover effects and smooth animations
 - Responsive design that works on mobile and desktop
+- Loading spinner and error handling
 
 ## License
 

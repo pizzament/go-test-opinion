@@ -7,24 +7,31 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"time"
 )
 
 type Market struct {
-	ID          string  `json:"id"`
-	Question    string  `json:"question"`
-	Description string  `json:"description"`
-	EndDate     string  `json:"endDate"`
-	YesPrice    float64 `json:"yesPrice"`
-	NoPrice     float64 `json:"noPrice"`
-	Volume      float64 `json:"volume"`
+	MarketID    int    `json:"marketId"`
+	MarketTitle string `json:"marketTitle"`
+	Status      int    `json:"status"`
+	StatusEnum  string `json:"statusEnum"`
+	YesTokenID  string `json:"yesTokenId"`
+	NoTokenID   string `json:"noTokenId"`
+	Volume      string `json:"volume"`
+	Volume24h   string `json:"volume24h"`
 }
 
-type MarketsResponse struct {
-	Markets []Market `json:"markets"`
+type APIResponse struct {
+	Code   int    `json:"code"`
+	Msg    string `json:"msg"`
+	Result struct {
+		Total int      `json:"total"`
+		List  []Market `json:"list"`
+	} `json:"result"`
 }
 
-const opinionTradeAPI = "https://api.opinion.trade/v1/markets"
+const opinionTradeAPI = "https://openapi.opinion.trade/openapi/market"
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
@@ -43,13 +50,36 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func getRandomMarkets(w http.ResponseWriter, r *http.Request) {
+	apiKey := os.Getenv("OPINION_API_KEY")
+	if apiKey == "" {
+		http.Error(w, "OPINION_API_KEY environment variable not set", http.StatusInternalServerError)
+		return
+	}
+
+	// Create request with query parameters
+	url := fmt.Sprintf("%s?status=activated&limit=20", opinionTradeAPI)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Add API key header
+	req.Header.Set("apikey", apiKey)
+
 	// Fetch markets from Opinion.trade API
-	resp, err := http.Get(opinionTradeAPI)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to fetch markets: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("API returned status %d", resp.StatusCode), http.StatusInternalServerError)
+		return
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -57,14 +87,19 @@ func getRandomMarkets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var marketsResp MarketsResponse
-	if err := json.Unmarshal(body, &marketsResp); err != nil {
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to parse markets: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	if apiResp.Code != 0 {
+		http.Error(w, fmt.Sprintf("API error: %s", apiResp.Msg), http.StatusInternalServerError)
+		return
+	}
+
 	// Select 5 random markets
-	randomMarkets := selectRandomMarkets(marketsResp.Markets, 5)
+	randomMarkets := selectRandomMarkets(apiResp.Result.List, 5)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(randomMarkets)
@@ -320,25 +355,38 @@ func getHTML() string {
             const html = '<div class="markets-grid">' +
                 markets.map(market =>
                     '<div class="market-card">' +
-                        '<div class="market-question">' + escapeHtml(market.question) + '</div>' +
-                        (market.description ? '<div class="market-description">' + escapeHtml(market.description) + '</div>' : '') +
+                        '<div class="market-question">' + escapeHtml(market.marketTitle) + '</div>' +
+                        '<div class="market-description">Market ID: ' + market.marketId + ' • Status: ' + market.statusEnum + '</div>' +
                         '<div class="market-stats">' +
                             '<div class="stat">' +
-                                '<div class="stat-label">Yes Price</div>' +
-                                '<div class="stat-value yes">' + (market.yesPrice ? (market.yesPrice * 100).toFixed(1) + '%' : 'N/A') + '</div>' +
+                                '<div class="stat-label">Total Volume</div>' +
+                                '<div class="stat-value yes">$' + formatVolume(market.volume) + '</div>' +
                             '</div>' +
                             '<div class="stat">' +
-                                '<div class="stat-label">No Price</div>' +
-                                '<div class="stat-value no">' + (market.noPrice ? (market.noPrice * 100).toFixed(1) + '%' : 'N/A') + '</div>' +
+                                '<div class="stat-label">24h Volume</div>' +
+                                '<div class="stat-value no">$' + formatVolume(market.volume24h) + '</div>' +
                             '</div>' +
                         '</div>' +
-                        (market.endDate ? '<div class="market-meta">📅 Ends: ' + new Date(market.endDate).toLocaleDateString() + '</div>' : '') +
-                        (market.volume ? '<div class="market-meta">💰 Volume: $' + market.volume.toLocaleString() + '</div>' : '') +
+                        '<div class="market-meta">🎯 Yes Token: ' + shortenAddress(market.yesTokenId) + '</div>' +
+                        '<div class="market-meta">🎯 No Token: ' + shortenAddress(market.noTokenId) + '</div>' +
                     '</div>'
                 ).join('') +
                 '</div>';
 
             container.innerHTML = html;
+        }
+
+        function formatVolume(volume) {
+            if (!volume) return '0';
+            const num = parseFloat(volume);
+            if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(2) + 'K';
+            return num.toFixed(2);
+        }
+
+        function shortenAddress(addr) {
+            if (!addr || addr.length < 12) return addr;
+            return addr.substring(0, 6) + '...' + addr.substring(addr.length - 4);
         }
 
         function escapeHtml(text) {
