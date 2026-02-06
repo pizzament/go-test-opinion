@@ -325,9 +325,19 @@ func serveMarketDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch orderbook prices for Yes and No tokens
-	yesBid, yesAsk := fetchBestPrices(marketResp.Result.YesTokenID, apiKey, client)
-	noBid, noAsk := fetchBestPrices(marketResp.Result.NoTokenID, apiKey, client)
+	// Fetch orderbook prices for Yes and No tokens concurrently
+	var yesBid, yesAsk, noBid, noAsk string
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		yesBid, yesAsk = fetchBestPrices(marketResp.Result.YesTokenID, apiKey, client)
+	}()
+	go func() {
+		defer wg.Done()
+		noBid, noAsk = fetchBestPrices(marketResp.Result.NoTokenID, apiKey, client)
+	}()
+	wg.Wait()
 
 	// Serve the market detail page
 	w.Header().Set("Content-Type", "text/html")
